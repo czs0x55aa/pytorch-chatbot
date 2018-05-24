@@ -1,11 +1,17 @@
 # coding=utf8
+import os
 import random
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
 
 from modules.constructor import make_base_model
+from modules.loss import MaskedCrossEntropyLoss
 
+
+def PPL(loss):
+    """ compute PPL """
+    return math.exp(min(loss, 100))
 
 class Task(object):
     def __init__(self, config):
@@ -17,6 +23,7 @@ class Task(object):
         self.enc_vocab = None
         self.dec_vocab = None
         self.model = None
+        self.CUDA = config['train']['CUDA']
 
     def load(self, mode='train', model_path=None, epoch=0):
         self.model_path = model_path
@@ -30,6 +37,7 @@ class Task(object):
             self.__load_data()
             self.__load_model()
             self.__load_optimizer()
+            self.__load_loss_func()
         else:
             self.mode = 'test'
             self.__load_model()
@@ -63,6 +71,9 @@ class Task(object):
         else:
             raise RuntimeError("Invalid optim method: " + optim_method)
 
+    def __load_loss_func(self):
+        self.loss_func = MaskedCrossEntropyLoss(self.CUDA)
+
     def __load_vocab(self):
         assert self.model_path is not None
         # 根据路径加载词表
@@ -91,6 +102,7 @@ def read_dataset(file_path):
 
 class DataSet(object):
     def __init__(self, config):
+        self.TOKEN = config['token']
         self.file_path = '/'.join([config['dataset']['path'],
                                    config['dataset']['dir'],
                                    config['dataset']['name']])
@@ -99,41 +111,43 @@ class DataSet(object):
         self.MIN_COUNT = config['preproccess']['min_count']
         self.BATCH_SIZE = config['train']['batch_size']
         self.N_TEST_BATCH = config['preproccess']['n_test_batch']
-        self.CUDA = config['train']['cuda']
+        self.CUDA = config['train']['CUDA']
         # 加载原始数据
         length_range = range(self.MIN_LEN, self.MAX_LEN + 1)
         def keep_pair(pair):
             return len(pair[0]) in length_range and len(pair[1]) in length_range
-        self.data_pair = filter(keep, read_dataset(self.file_path))
+        self.data_pair = list(filter(keep_pair, read_dataset(self.file_path)))
 
     def build_vocabulary(self):
-        enc_vocab = Vocabulary(self.config['token'])
-        dec_vocab = Vocabulary(self.config['token'])
+        enc_vocab = Vocabulary(self.TOKEN)
+        dec_vocab = Vocabulary(self.TOKEN)
         for src_sen, tgt_sen in self.data_pair:
             for word in src_sen:
                 enc_vocab.insert_word(word)
             for word in tgt_sen:
                 dec_vocab.insert_word(word)
         enc_vocab.trim(self.MIN_COUNT)
-        tgt_vocab.trim(self.MIN_COUNT)
+        dec_vocab.trim(self.MIN_COUNT)
+        print(f'Encoder vocabulary size: {len(enc_vocab)}.')
+        print(f'Decoder vocabulary size: {len(dec_vocab)}.')
         return enc_vocab, dec_vocab
 
     def build_data_loader(self, enc_vocab, dec_vocab):
         def word2num(pair):
-            return tuple(
+            return (
                 [enc_vocab.word2idx[w] if w in enc_vocab.word2idx else enc_vocab.UNK for w in pair[0]],
                 [dec_vocab.word2idx[w] if w in dec_vocab.word2idx else dec_vocab.UNK for w in pair[1]]
             )
         # 字符序列转成数值序列
-        seq_pair = map(word2num, self.data_pair)
-
+        seq_pair = list(map(word2num, self.data_pair))
+        
         # 过滤掉UNK过多的句子
         # seq_pair = filter(lambda pair: pair[0].count(enc_vocab.UNK) < 3 and pair[1].count(dec_vocab.UNK) < 2, seq_pair)
         
         # 划分批数据
         random.shuffle(seq_pair)
         num_batch = len(seq_pair) // self.BATCH_SIZE
-        batch_data = [seq_pair[i: i + self.BATCH_SIZE] for i in range(0, num_batch, self.BATCH_SIZE)]
+        batch_data = [seq_pair[i: i + self.BATCH_SIZE] for i in range(0, num_batch * self.BATCH_SIZE, self.BATCH_SIZE)]
 
         # 填充数据
         def fill_batch(pair_batch):
@@ -146,11 +160,13 @@ class DataSet(object):
             src_batch = map(lambda x: x + [enc_vocab.EOS] + [enc_vocab.PAD] * (max_src_len - len(x)), src_batch)
             tgt_batch = map(lambda x: [dec_vocab.GO] + x + [dec_vocab.EOS] + [dec_vocab.PAD] * (max_tgt_len - len(x)), tgt_batch)
             return list(zip(src_batch, tgt_batch))
-        batch_data = map(fill_batch, batch_data)
+        batch_data = list(map(fill_batch, batch_data))
         
         # 划分数据
         self.train_loader = DataLoader(batch_data[:-self.N_TEST_BATCH], self.CUDA)
         self.valid_loader = DataLoader(batch_data[-self.N_TEST_BATCH:], self.CUDA)
+        print(f'\nTrain batch number: {len(self.train_loader)}.')
+        print(f'Valid batch number: {len(self.valid_loader)}.')
         return self.train_loader, self.valid_loader
 
 
@@ -159,9 +175,11 @@ class DataLoader(object):
         self.CUDA = CUDA
         self._variable = False
         self._batch_data = batch_data
+        # print(type(batch_data))
         self._size = len(batch_data)
         # 计算每个批的src长度
-        self._batch_src_length = map(lambda b: [len(x) for x in list(zip(*b))[0]], batch_data)
+        self._batch_src_length = list(map(lambda b: [len(x) for x in list(zip(*b))[0]], batch_data))
+        self._batch_tgt_length = list(map(lambda b: [len(x) for x in list(zip(*b))[1]], batch_data))
 
     def variable(self):
         if self._variable is False:
@@ -171,7 +189,7 @@ class DataLoader(object):
                     Variable(torch.LongTensor(src_batch).transpose(0, 1)),
                     Variable(torch.LongTensor(tgt_batch).transpose(0, 1))
                 )
-            self._batch_data = map(cnv2var, self._batch_data)
+            self._batch_data = list(map(cnv2var, self._batch_data))
         self._variable = True
 
     def shuffle(self):
@@ -182,13 +200,13 @@ class DataLoader(object):
 
     def __getitem__(self, index):
         src_batch, tgt_batch = list(zip(*self._batch_data[index]))
-        if self._variable is True:
+        if self._variable is False:
             src_batch = Variable(torch.LongTensor(src_batch).transpose(0, 1))
             tgt_batch = Variable(torch.LongTensor(tgt_batch).transpose(0, 1))
 
         if self.CUDA:
-            return src_batch.cuda(), tgt_batch.cuda(), self._batch_src_length[index]
-        return src_batch, tgt_batch, self._batch_src_length[index]
+            return src_batch.cuda(), tgt_batch.cuda(), self._batch_src_length[index], self._batch_tgt_length[index]
+        return src_batch, tgt_batch, self._batch_src_length[index], self._batch_tgt_length[index]
 
 class Vocabulary(object):
     def __init__(self, TOKEN):
@@ -222,7 +240,8 @@ class Vocabulary(object):
             self.word2count[word] += 1
     
     def trim(self, min_count):
-        keep_word = filter(lambda w: self.word2count[w] >= min_count, self.word2count.keys())
+        word2count = self.word2count
+        keep_word = filter(lambda w: word2count[w] >= min_count, self.word2count.keys())
 
         self.reset()
         for word in keep_word:

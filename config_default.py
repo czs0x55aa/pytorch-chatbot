@@ -11,7 +11,7 @@ config = {
         'min_count': 2,
         'min_len': 1,
         'max_len': 20,
-        'n_test': 1000
+        'n_test_batch': 10
     },
     'token': {
         'PAD': 0,
@@ -27,8 +27,9 @@ config = {
         'learning_rate': 0.001,
         'max_grad_norm': 5,
         'teacher_forcing_ratio': 1.0,
+        'print_every': 100,
         'checkpoint': False,
-        'slience': False
+        'silence': False
     },
     'model': {
         'embedding_size': 500,

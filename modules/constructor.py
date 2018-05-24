@@ -1,6 +1,6 @@
 # coding=utf8
 
-from component import Encoder, Decoder, Seq2Seq
+from modules.models import Encoder, Decoder, Seq2Seq
 
 def make_encoder(cf, vocab_size):
 
