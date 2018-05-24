@@ -1,5 +1,7 @@
 # coding=utf8
 import os
+import sys
+import math
 import random
 import torch
 import torch.optim as optim
@@ -8,6 +10,10 @@ from torch.autograd import Variable
 from modules.constructor import make_base_model
 from modules.loss import MaskedCrossEntropyLoss
 
+def printf(*outs):
+    """ flush print """
+    print(*outs)
+    sys.stdout.flush()
 
 def PPL(loss):
     """ compute PPL """
