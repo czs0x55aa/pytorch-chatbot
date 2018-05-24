@@ -45,7 +45,7 @@ class Trainer(object):
                     last_time = time.time()
                  
             self.validate()
-            
+
 
     def validate(self):
         self.model.eval()
@@ -64,14 +64,17 @@ class Trainer(object):
 
 if __name__ == '__main__':
     task = Task(config)
+
     if len(sys.argv) > 2:
         # load checkpoint
-        task.load(mode='train', model_path=sys.argv[1])
+        task.load(mode='train', ckpt_path=sys.argv[1], model_name=sys.argv[2])
     else:
         # 重新训练
         if config['train']['silence']:
             # backgrounder
             sys.stdout = open('train.log', 'w')
         task.load(mode='train')
+
     trainer = Trainer(task)
     trainer.train()
+    task.save('./ckpt')

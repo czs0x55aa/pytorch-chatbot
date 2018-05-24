@@ -31,9 +31,10 @@ class Task(object):
         self.model = None
         self.CUDA = config['train']['CUDA']
 
-    def load(self, mode='train', model_path=None, epoch=0):
-        self.model_path = model_path
-        if model_path is not None:
+    def load(self, mode='train', ckpt_path=None, model_name='model', epoch=0):
+        self.ckpt_path = ckpt_path
+        self.model_name = model_name
+        if ckpt_path is not None:
             # 加载词表存档
             self.__load_vocab()
 
@@ -48,8 +49,16 @@ class Task(object):
             self.mode = 'test'
             self.__load_model()
 
-    def save(self, path):
-        pass
+    def save(self, ckpt_path, model_name='model'):
+        if os.path.exists(ckpt_path) is False:
+            os.mkdir(ckpt_path)
+
+        # 保存词表
+        self.enc_vocab.save(f'{ckpt_path}/enc_vocab')
+        self.dec_vocab.save(f'{ckpt_path}/dec_vocab')
+
+        # 保存模型
+        torch.save(self.model.state_dict(), f'{ckpt_path}/{model_name}')
 
     def __load_data(self):
         # 加载文本数据
@@ -81,16 +90,21 @@ class Task(object):
         self.loss_func = MaskedCrossEntropyLoss(self.CUDA)
 
     def __load_vocab(self):
-        assert self.model_path is not None
+        assert self.ckpt_path is not None
         # 根据路径加载词表
+        self.enc_vocab = Vocabulary(self.config['token'])
+        self.dec_vocab = Vocabulary(self.config['token'])
+        self.enc_vocab.load(f'{self.ckpt_path}/enc_vocab')
+        self.dec_vocab.load(f'{self.ckpt_path}/dec_vocab')
 
-    def __load_model(self, model_path=None):
+    def __load_model(self, ckpt_path=None):
         assert self.enc_vocab and self.dec_vocab
+        self.ckpt_path = ckpt_path
         self.model = make_base_model(self.config['model'], len(self.enc_vocab), len(self.dec_vocab))
         if self.CUDA:
             self.model.cuda()
-        if model_path is not None:
-            self.model.load_state_dict(torch.load(model_path))
+        if ckpt_path is not None:
+            self.model.load_state_dict(torch.load(ckpt_path))
         
 
 def read_dataset(file_path):
@@ -254,6 +268,21 @@ class Vocabulary(object):
             self.insert_word(word)
 
     def save(self, path):
-        pass
+        with open(path, 'w') as file:
+            vocab_list = list(zip(self.word2idx.keys(), self.word2idx.values()))
+            # 按index排序
+            sorted_vocab = sorted(vocab_list, key=lambda x: x[1])
+            for word, index in sorted_vocab:
+                file.write(f'{word} {index}\n')
+    
+    def load(self, path):
+        self.reset()
+        self.n_words = 0
+        with open(path) as file:
+            # 按顺序加载词表
+            vocab_list = [line[:-1].split() for line in file]
+            for word, index in vocab_list:
+                self.insert_word(word)
+        
 
 

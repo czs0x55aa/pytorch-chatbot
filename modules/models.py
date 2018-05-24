@@ -36,8 +36,7 @@ class Seq2Seq(nn.Module):
                 _, topi = prob_output.data.topk(1, dim=1)
                 dec_input = Variable(topi.squeeze(1))
 
-            dec_output, dec_hidden = \
-                self.decoder(dec_input, dec_hidden, enc_outputs)
+            dec_output, dec_hidden = self.decoder(dec_input, dec_hidden, enc_outputs)
             all_outputs.append(dec_output)
 
         outputs = torch.stack(all_outputs)
@@ -74,8 +73,7 @@ class Encoder(nn.Module):
 
         if self.num_directions == 2:
             # sum bidirectional outputs
-            outputs = outputs[:, :, :self.hidden_size] + \
-                outputs[:, :, self.hidden_size:]
+            outputs = outputs[:, :, :self.hidden_size] + outputs[:, :, self.hidden_size:]
 
         # outputs size (max_len, batch_size, hidden_size)
         # hidden size (bi * n_layers, batch_size, hidden_size)
@@ -122,8 +120,7 @@ class Decoder(nn.Module):
             # context size (batch_size, 1, hidden_size) = (batch_size, 1, max_len) * (batch_size, max_len, hidden_size)
             context = attn_weights.bmm(enc_ouputs.transpose(0, 1))
             # concat_input size (batch_size, hidden_size * 2)
-            concat_input = torch.cat(
-                (rnn_output.squeeze(0), context.squeeze(1)), 1)
+            concat_input = torch.cat((rnn_output.squeeze(0), context.squeeze(1)), 1)
             rnn_output = self.concat(concat_input)
         else:
             rnn_output = rnn_output.squeeze(0)
