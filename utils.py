@@ -101,10 +101,12 @@ class Task(object):
         assert self.enc_vocab and self.dec_vocab
         self.ckpt_path = ckpt_path
         self.model = make_base_model(self.config['model'], len(self.enc_vocab), len(self.dec_vocab))
-        if self.CUDA:
-            self.model.cuda()
+        print('\nModel Structure:')
+        print(self.model)
         if ckpt_path is not None:
             self.model.load_state_dict(torch.load(ckpt_path))
+        if self.CUDA:
+            self.model.cuda()
         
 
 def read_dataset(file_path):
@@ -153,21 +155,16 @@ class DataSet(object):
         return enc_vocab, dec_vocab
 
     def build_data_loader(self, enc_vocab, dec_vocab):
-        def word2num(pair):
-            return (
-                [enc_vocab.word2idx[w] if w in enc_vocab.word2idx else enc_vocab.UNK for w in pair[0]],
-                [dec_vocab.word2idx[w] if w in dec_vocab.word2idx else dec_vocab.UNK for w in pair[1]]
-            )
         # 字符序列转成数值序列
-        seq_pair = list(map(word2num, self.data_pair))
+        seq_pair = list(map(lambda p: (enc_vocab.words2ids(p[0]), dec_vocab.words2ids(p[1])), self.data_pair))
         
         # 过滤掉UNK过多的句子
         # seq_pair = filter(lambda pair: pair[0].count(enc_vocab.UNK) < 3 and pair[1].count(dec_vocab.UNK) < 2, seq_pair)
         
         # 划分批数据
         random.shuffle(seq_pair)
-        num_batch = len(seq_pair) // self.BATCH_SIZE
-        batch_data = [seq_pair[i: i + self.BATCH_SIZE] for i in range(0, num_batch * self.BATCH_SIZE, self.BATCH_SIZE)]
+        n_batch = len(seq_pair) // self.BATCH_SIZE
+        batch_data = [seq_pair[i: i + self.BATCH_SIZE] for i in range(0, n_batch * self.BATCH_SIZE, self.BATCH_SIZE)]
 
         # 填充数据
         def fill_batch(pair_batch):
@@ -199,7 +196,7 @@ class DataLoader(object):
         self._size = len(batch_data)
         # 计算每个批的src长度
         self._batch_src_length = list(map(lambda b: [len(x) for x in list(zip(*b))[0]], batch_data))
-        self._batch_tgt_length = list(map(lambda b: [len(x) for x in list(zip(*b))[1]], batch_data))
+        self._batch_tgt_length = list(map(lambda b: [len(x)-1 for x in list(zip(*b))[1]], batch_data))
 
     def variable(self):
         if self._variable is False:
@@ -213,7 +210,16 @@ class DataLoader(object):
         self._variable = True
 
     def shuffle(self):
-        random.shuffle(self._batch_data)
+        idx_list = list(range(self._size))
+        random.shuffle(idx_list)
+        batch_data, batch_src_length, batch_tgt_length = [], [], []
+        for idx in idx_list:
+            batch_data.append(self._batch_data[idx])
+            batch_src_length.append(self._batch_src_length[idx])
+            batch_tgt_length.append(self._batch_tgt_length[idx])
+        self._batch_data = batch_data
+        self._batch_src_length = batch_src_length
+        self._batch_tgt_length = batch_tgt_length
 
     def __len__(self):
         return self._size
@@ -267,6 +273,12 @@ class Vocabulary(object):
         for word in keep_word:
             self.insert_word(word)
 
+    def words2ids(self, words):
+        return [self.word2idx[w] if w in self.word2idx else self.UNK for w in words]
+
+    def ids2word(self, ids):
+        return [self.idx2word[idx] for idx in ids]
+
     def save(self, path):
         with open(path, 'w') as file:
             vocab_list = list(zip(self.word2idx.keys(), self.word2idx.values()))
@@ -283,6 +295,3 @@ class Vocabulary(object):
             vocab_list = [line[:-1].split() for line in file]
             for word, index in vocab_list:
                 self.insert_word(word)
-        
-
-

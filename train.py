@@ -5,6 +5,7 @@ import time
 from config_default import *
 import utils
 from utils import Task
+from modules.beam_search import BeamSearch
 
 class Trainer(object):
     def __init__(self, task):
@@ -17,10 +18,12 @@ class Trainer(object):
         self.epoch = task.epoch
         self.train_loader = task.train_loader
         self.valid_loader = task.valid_loader
-        utils.printf_EVERY = task.config['train']['print_every']
+        self.PRINT_EVERY = task.config['train']['print_every']
+
+        self.beam_search = BeamSearch(task)
     
     def train(self):
-        utils.printf('Training Start ...')
+        utils.printf('\nTraining Start ...')
         self.model.train()
         start_time = time.time()
         for epoch in range(self.epoch, self.N_EPOCHS):
@@ -30,36 +33,41 @@ class Trainer(object):
             utils.printf(f'\nEpoch {epoch+1:5d}/{self.N_EPOCHS:5d}:')
             for i, batch in enumerate(self.train_loader):
                 src_var, tgt_var, src_lens, tgt_lens = batch
-
                 self.model.zero_grad()
                 outputs, hidden = self.model(src_var, tgt_var[:-1], src_lens)
 
                 loss = self.loss_func(outputs, tgt_var[1:].contiguous(), tgt_lens)
                 total_loss += loss.data[0]
+                loss.backward()
                 self.optimizer.step()
 
-                if (i + 1) % utils.printf_EVERY == 0:
-                    mean_ppl = utils.PPL(total_loss / print_every)
-                    utils.printf(f'\tBatch {i+1:5d}/{self.N_EPOCHS:5d}; Train PPL: {mean_ppl: 6.2f}; {time.time() - last_time:6.0f} s elapsed')
+                if (i + 1) % self.PRINT_EVERY == 0:
+                    mean_ppl = utils.PPL(total_loss / self.PRINT_EVERY)
+                    utils.printf(f'\tBatch {i+1:5d}/{len(self.train_loader):5d}; Train PPL: {mean_ppl: 6.2f}; {time.time() - last_time:6.0f} s elapsed')
                     total_loss = 0
                     last_time = time.time()
                  
             self.validate()
+            self.auto_test()
 
 
     def validate(self):
         self.model.eval()
-        loss_total = 0
+        total_loss = 0
         for i, batch in enumerate(self.valid_loader):
             src_var, tgt_var, src_lens, tgt_lens = batch
-
+        
             outputs, hidden = self.model(src_var, tgt_var[:-1], src_lens)
             loss = self.loss_func(outputs, tgt_var[1:].contiguous(), tgt_lens)
-            loss_total += loss.data[0]
+            total_loss += loss.data[0]
         self.model.train()
-        ppl = utils.PPL(loss_total / len(self.valid_loader))
+        ppl = utils.PPL(total_loss / len(self.valid_loader))
         utils.printf(f'\tValid PPL: {ppl: 6.2f}\n')
 
+    def auto_test(self):
+        bs_ret = self.beam_search.decode('what is your name ?'.split())
+        for sentence in bs_ret[:5]:
+            print(' '.join(self.task.dec_vocab.ids2word(sentence['ids'])), sentence['prob'])
 
 
 if __name__ == '__main__':
@@ -75,6 +83,7 @@ if __name__ == '__main__':
             sys.stdout = open('train.log', 'w')
         task.load(mode='train')
 
+
     trainer = Trainer(task)
     trainer.train()
-    task.save('./ckpt')
+    # task.save('./ckpt')

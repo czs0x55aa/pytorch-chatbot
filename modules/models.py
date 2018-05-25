@@ -108,8 +108,7 @@ class Decoder(nn.Module):
         # embedded size (1, batch_size, hidden_size)
         embedded = self.embedding(input_var).unsqueeze(0)
         if real_input_var is not None:
-            embedded = (
-                embedded + self.embedding(real_input_var).unsqueeze(0)) / 2
+            embedded = (embedded + self.embedding(real_input_var).unsqueeze(0)) / 2
         # embedded = self.embedded_dropout(embedded)
 
         # rnn_output size (1, batch_size, hidden_size)
