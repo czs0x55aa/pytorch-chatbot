@@ -79,7 +79,7 @@ class ChatBot(LoopBot):
         response_group = []
         for resp in response:
             response_group.append({
-                'text': ' '.join(self.task.dec_vocab.ids2word(resp['ids'])),
+                'text': ' '.join(self.task.dec_vocab.ids2word(resp['ids'][:-1])),
                 'prob': resp['prob']
             })
         return response_group
@@ -87,7 +87,7 @@ class ChatBot(LoopBot):
     def print(self, response):
         if isinstance(response, list):
             for resp in response[:5]:
-                print(f"{self.name}: {resp['text']} score:{resp['prob']}")
+                print(f"{self.name}: {resp['text']} score:{resp['prob']: .2f}")
             print('\n')
 
 
