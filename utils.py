@@ -58,7 +58,8 @@ class Task(object):
         self.dec_vocab.save(f'{ckpt_path}/dec_vocab')
 
         # 保存模型
-        torch.save(self.model.state_dict(), f'{ckpt_path}/{model_name}')
+        torch.save(self.model.state_dict(), f'{ckpt_path}/{model_name}.pt')
+        print(f'Saved successfully.')
 
     def __load_data(self):
         # 加载文本数据
@@ -97,14 +98,14 @@ class Task(object):
         self.enc_vocab.load(f'{self.ckpt_path}/enc_vocab')
         self.dec_vocab.load(f'{self.ckpt_path}/dec_vocab')
 
-    def __load_model(self, ckpt_path=None):
+    def __load_model(self):
         assert self.enc_vocab and self.dec_vocab
-        self.ckpt_path = ckpt_path
         self.model = make_base_model(self.config['model'], len(self.enc_vocab), len(self.dec_vocab))
         print('\nModel Structure:')
         print(self.model)
-        if ckpt_path is not None:
-            self.model.load_state_dict(torch.load(ckpt_path))
+        if self.ckpt_path is not None:
+            self.model.load_state_dict(torch.load(f'{self.ckpt_path}/{self.model_name}.pt'))
+            print(f'Load archive from {self.ckpt_path}/{self.model_name}.pt')
         if self.CUDA:
             self.model.cuda()
         
@@ -123,7 +124,7 @@ def read_dataset(file_path):
 
 
 class DataSet(object):
-    def __init__(self, config):
+    def __init__(self, config, batch_size=10):
         self.TOKEN = config['token']
         self.file_path = '/'.join([config['dataset']['path'],
                                    config['dataset']['dir'],
@@ -159,44 +160,52 @@ class DataSet(object):
         seq_pair = list(map(lambda p: (enc_vocab.words2ids(p[0]), dec_vocab.words2ids(p[1])), self.data_pair))
         
         # 过滤掉UNK过多的句子
-        # seq_pair = filter(lambda pair: pair[0].count(enc_vocab.UNK) < 3 and pair[1].count(dec_vocab.UNK) < 2, seq_pair)
+        seq_pair = list(filter(lambda p: p[0].count(enc_vocab.UNK) < 2 and p[1].count(dec_vocab.UNK) < 1, seq_pair))
         
         # 划分批数据
         random.shuffle(seq_pair)
-        n_batch = len(seq_pair) // self.BATCH_SIZE
-        batch_data = [seq_pair[i: i + self.BATCH_SIZE] for i in range(0, n_batch * self.BATCH_SIZE, self.BATCH_SIZE)]
+        # 划分数据
+        n_valid_data = self.BATCH_SIZE * self.N_TEST_BATCH
+        self.train_loader = DataLoader(seq_pair[:-n_valid_data], batch_size=self.BATCH_SIZE, CUDA=self.CUDA)
+        self.valid_loader = DataLoader(seq_pair[-n_valid_data:], batch_size=self.BATCH_SIZE, CUDA=self.CUDA)
 
         # 填充数据
-        def fill_batch(pair_batch):
-            # 按src长度降序
-            sorted_pair_batch = sorted(pair_batch, key=lambda x: len(x[0]), reverse=True)
-            src_batch, tgt_batch = list(zip(*sorted_pair_batch))
-            max_src_len = len(src_batch[0])
-            max_tgt_len = max([len(x) for x in tgt_batch])
-            # 填充字符
-            src_batch = map(lambda x: x + [enc_vocab.EOS] + [enc_vocab.PAD] * (max_src_len - len(x)), src_batch)
-            tgt_batch = map(lambda x: [dec_vocab.GO] + x + [dec_vocab.EOS] + [dec_vocab.PAD] * (max_tgt_len - len(x)), tgt_batch)
-            return list(zip(src_batch, tgt_batch))
-        batch_data = list(map(fill_batch, batch_data))
-        
-        # 划分数据
-        self.train_loader = DataLoader(batch_data[:-self.N_TEST_BATCH], self.CUDA)
-        self.valid_loader = DataLoader(batch_data[-self.N_TEST_BATCH:], self.CUDA)
+        self.train_loader.fill_data(enc_vocab, dec_vocab)
+        self.valid_loader.fill_data(enc_vocab, dec_vocab)
+
         print(f'\nTrain batch number: {len(self.train_loader)}.')
         print(f'Valid batch number: {len(self.valid_loader)}.')
         return self.train_loader, self.valid_loader
 
 
 class DataLoader(object):
-    def __init__(self, batch_data, CUDA=False):
-        self.CUDA = CUDA
+    def __init__(self, source_data, batch_size, CUDA=False):
         self._variable = False
-        self._batch_data = batch_data
-        # print(type(batch_data))
-        self._size = len(batch_data)
-        # 计算每个批的src长度
-        self._batch_src_length = list(map(lambda b: [len(x) for x in list(zip(*b))[0]], batch_data))
-        self._batch_tgt_length = list(map(lambda b: [len(x)-1 for x in list(zip(*b))[1]], batch_data))
+        self.CUDA = CUDA
+        self.batch_size = batch_size
+        self._size = len(source_data) // batch_size
+        # 划分batch
+        batch_data = [source_data[i: i + self.batch_size] for i in range(0, self._size * self.batch_size, self.batch_size)]
+        # batch内排序
+        def batch_sort_src(batch):
+            return sorted(batch, key=lambda p: len(p[0]), reverse=True)
+        self._batch_data = list(map(batch_sort_src, batch_data))
+        # 统计语句长度
+        def count_batch_words(batch):
+            src_batch, tgt_batch = list(zip(*batch))
+            return ([len(x)+1 for x in src_batch], [len(x)+1 for x in tgt_batch])
+        self._batch_words_length = list(map(count_batch_words, self._batch_data))
+
+    def fill_data(self, enc_vocab, dec_vocab):
+        def fill_batch(batch):
+            src_batch, tgt_batch = list(zip(*batch))
+            max_src_len = len(src_batch[0])
+            max_tgt_len = max([len(x) for x in tgt_batch])
+            # 填充字符
+            src_batch = map(lambda x: x + [enc_vocab.EOS] + [enc_vocab.PAD] * (max_src_len - len(x)), src_batch)
+            tgt_batch = map(lambda x: [dec_vocab.GO] + x + [dec_vocab.EOS] + [dec_vocab.PAD] * (max_tgt_len - len(x)), tgt_batch)
+            return list(zip(src_batch, tgt_batch))
+        self._batch_data = list(map(fill_batch, self._batch_data))
 
     def variable(self):
         if self._variable is False:
@@ -212,14 +221,12 @@ class DataLoader(object):
     def shuffle(self):
         idx_list = list(range(self._size))
         random.shuffle(idx_list)
-        batch_data, batch_src_length, batch_tgt_length = [], [], []
+        batch_data_t, word_length_t = [], []
         for idx in idx_list:
-            batch_data.append(self._batch_data[idx])
-            batch_src_length.append(self._batch_src_length[idx])
-            batch_tgt_length.append(self._batch_tgt_length[idx])
-        self._batch_data = batch_data
-        self._batch_src_length = batch_src_length
-        self._batch_tgt_length = batch_tgt_length
+            batch_data_t.append(self._batch_data[idx])
+            word_length_t.append(self._batch_words_length[idx])
+        self._batch_data = batch_data_t
+        self._batch_words_length = word_length_t
 
     def __len__(self):
         return self._size
@@ -231,8 +238,8 @@ class DataLoader(object):
             tgt_batch = Variable(torch.LongTensor(tgt_batch).transpose(0, 1))
 
         if self.CUDA:
-            return src_batch.cuda(), tgt_batch.cuda(), self._batch_src_length[index], self._batch_tgt_length[index]
-        return src_batch, tgt_batch, self._batch_src_length[index], self._batch_tgt_length[index]
+            return src_batch.cuda(), tgt_batch.cuda(), self._batch_words_length[index]
+        return src_batch, tgt_batch, self._batch_words_length[index]
 
 class Vocabulary(object):
     def __init__(self, TOKEN):

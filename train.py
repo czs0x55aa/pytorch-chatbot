@@ -1,7 +1,7 @@
 # coding=utf8
 import sys
 import time
-
+from torch.nn.utils import clip_grad_norm
 from config_default import *
 import utils
 from utils import Task
@@ -19,6 +19,7 @@ class Trainer(object):
         self.train_loader = task.train_loader
         self.valid_loader = task.valid_loader
         self.PRINT_EVERY = task.config['train']['print_every']
+        self.max_grad_norm = task.config['train']['max_grad_norm']
 
         self.beam_search = BeamSearch(task)
     
@@ -32,13 +33,16 @@ class Trainer(object):
             last_time = time.time()
             utils.printf(f'\nEpoch {epoch+1:5d}/{self.N_EPOCHS:5d}:')
             for i, batch in enumerate(self.train_loader):
-                src_var, tgt_var, src_lens, tgt_lens = batch
+
+                src_var, tgt_var, pair_lens = batch
+                src_lens, tgt_lens = pair_lens
                 self.model.zero_grad()
                 outputs, hidden = self.model(src_var, tgt_var[:-1], src_lens)
 
                 loss = self.loss_func(outputs, tgt_var[1:].contiguous(), tgt_lens)
                 total_loss += loss.data[0]
                 loss.backward()
+                clip_grad_norm(self.model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
                 if (i + 1) % self.PRINT_EVERY == 0:
@@ -49,13 +53,15 @@ class Trainer(object):
                  
             self.validate()
             self.auto_test()
+            self.task.save('./ckpt')
 
 
     def validate(self):
         self.model.eval()
         total_loss = 0
         for i, batch in enumerate(self.valid_loader):
-            src_var, tgt_var, src_lens, tgt_lens = batch
+            src_var, tgt_var, pair_lens = batch
+            src_lens, tgt_lens = pair_lens
         
             outputs, hidden = self.model(src_var, tgt_var[:-1], src_lens)
             loss = self.loss_func(outputs, tgt_var[1:].contiguous(), tgt_lens)
@@ -65,9 +71,17 @@ class Trainer(object):
         utils.printf(f'\tValid PPL: {ppl: 6.2f}\n')
 
     def auto_test(self):
-        bs_ret = self.beam_search.decode('what is your name ?'.split())
-        for sentence in bs_ret[:5]:
-            print(' '.join(self.task.dec_vocab.ids2word(sentence['ids'])), sentence['prob'])
+        test_input = [
+            'what is your name ?',
+            'how old are you ?'
+        ]
+        for input in test_input:
+            bs_ret = self.beam_search.decode(input.split())
+            print(input)
+            for sentence in bs_ret[:5]:
+                print(' '.join(self.task.dec_vocab.ids2word(sentence['ids'])), sentence['prob'])
+            print('==')
+        print('\n')
 
 
 if __name__ == '__main__':
@@ -82,7 +96,6 @@ if __name__ == '__main__':
             # backgrounder
             sys.stdout = open('train.log', 'w')
         task.load(mode='train')
-
 
     trainer = Trainer(task)
     trainer.train()
