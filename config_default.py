@@ -45,6 +45,6 @@ config = {
         'autotest': False,
         'beamsearch': True,
         'beam_size': 50,
-        'antiLM': 0
+        'antiLM': 0.5
     }
 }

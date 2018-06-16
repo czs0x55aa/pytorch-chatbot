@@ -1,6 +1,6 @@
 # pytorch-chatbot
 Seq2Seq chatbot implement using PyTorch  
-**Work in process**
+Feature: Seq2Seq + Beam Search + antiLM
 
 ## Requirements
 - Python3
@@ -41,11 +41,10 @@ Bot: i am going to have a picnic with my friends . score:-0.96
 Bot: i am going to buy a birthday party for you . score:-0.97  
 Bot: 5 years old . score:-0.98  
 ```
-## TODO
-- antiLM
 
 ## Reference
 - [A Neural Conversational Model](https://arxiv.org/abs/1506.05869)
 - [Effective Approaches to Attention-based Neural Machine Translation](https://arxiv.org/abs/1508.04025)
+- [A Diversity-Promoting Objective Function for Neural Conversation Models](https://arxiv.org/pdf/1510.03055.pdf)
 - [seq2seq-translation.ipynb](https://github.com/spro/practical-pytorch/blob/master/seq2seq-translation/seq2seq-translation.ipynb)
 - [Pytorch Documentation](https://pytorch.org/docs/0.3.0/)

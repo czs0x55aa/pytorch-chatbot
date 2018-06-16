@@ -16,6 +16,7 @@ class SearchState(object):
         self.dec_input = Variable(torch.LongTensor([self.TOKEN_GO]))
         self.last_hidden = None
         self.last_prob = Variable(torch.FloatTensor([[0]])) # 解码概率
+        self.next_idx = None
 
     def is_end(self):
         return self.search_size is 0
@@ -27,6 +28,11 @@ class SearchState(object):
     def get_hidden(self):
         assert self.last_hidden is not None
         return self.last_hidden.cuda() if self.CUDA else self.last_hidden
+
+    def get_antilm_hidden(self, last_hidden):
+        if self.next_idx is not None:
+            last_hidden = torch.stack([last_hidden[:, idx] for idx in self.next_idx], dim=1)
+        return last_hidden.cuda() if self.CUDA else last_hidden
 
     def get_prob(self):
         return self.last_prob.cuda() if self.CUDA else self.last_prob
@@ -71,6 +77,7 @@ class SearchState(object):
             self.last_prob = Variable(torch.FloatTensor([[p] for p in next_prob]))
             self.dec_input = Variable(torch.LongTensor(next_input))
             self.last_hidden = torch.stack([hidden[:, idx] for idx in next_idx], dim=1)
+            self.next_idx = next_idx
 
 
 class BeamSearch(object):
@@ -106,6 +113,12 @@ class BeamSearch(object):
         state = SearchState(self.enc_vocab, beam_size, CUDA=self.CUDA)
         state.last_hidden = enc_hidden[:self.model.decoder.n_layers]
 
+        if self.antiLM:
+            lm_last_hidden = Variable(torch.FloatTensor(*state.last_hidden.size()).zero_())
+            dummy_enc_output = Variable(torch.FloatTensor(*enc_outputs.size()).zero_())
+            if self.CUDA:
+                dummy_enc_output = dummy_enc_output.cuda()
+
         for step in range(self.MAX_LEN + 1):
             dec_input = state.get_input()
             last_hidden = state.get_hidden()
@@ -114,6 +127,12 @@ class BeamSearch(object):
             # Decode
             dec_output, last_hidden = self.model.decoder(dec_input, last_hidden, enc_outputs.repeat(1, search_size, 1))
             prob_outputs = F.log_softmax(dec_output, dim=1)  # (search_size, vocab_size)
+
+            if self.antiLM > 0 and step < 5:
+                lm_last_hidden = state.get_antilm_hidden(lm_last_hidden)
+                lm_dec_output, lm_last_hidden = self.model.decoder(dec_input, lm_last_hidden, dummy_enc_output.repeat(1, search_size, 1))
+                lm_prob_outputs = F.log_softmax(lm_dec_output, dim=1)
+                prob_outputs = prob_outputs - self.antiLM * lm_prob_outputs
 
             state.update(step, prob_outputs, last_hidden)
 
