@@ -113,7 +113,7 @@ class BeamSearch(object):
         state = SearchState(self.enc_vocab, beam_size, CUDA=self.CUDA)
         state.last_hidden = enc_hidden[:self.model.decoder.n_layers]
 
-        if self.antiLM:
+        if self.antiLM > 0:
             lm_last_hidden = Variable(torch.FloatTensor(*state.last_hidden.size()).zero_())
             dummy_enc_output = Variable(torch.FloatTensor(*enc_outputs.size()).zero_())
             if self.CUDA:
